@@ -177,6 +177,7 @@ typedef struct DASHContext {
     int64_t seg_duration;
     int64_t frag_duration;
     int64_t seg_duration_ts;
+    int64_t frame_duration_ts;
     int remove_at_exit;
     int use_template;
     int use_timeline;
@@ -1840,9 +1841,16 @@ static int dash_init(AVFormatContext *s)
             }
 
             if (c->start_segment > 1) {
-                char start_segment_str[128];
-                (void)sprintf(start_segment_str, "%d", c->start_segment);
-                av_dict_set(&opts, "fragment_index", start_segment_str, 0);
+                if (c->frame_duration_ts == 0) {
+                    av_log(s, AV_LOG_ERROR, "Frame duration not specified - fragment sequence numbers will be wrong");
+                } else {
+                    int fragments_per_segment = c->seg_duration_ts / c->frame_duration_ts;
+                    int start_fragment = ((c->start_segment - 1) * fragments_per_segment) + 1;
+                    char start_fragment_str[128];
+                    (void)sprintf(start_fragment_str, "%d", start_fragment);
+                    av_dict_set(&opts, "fragment_index", start_fragment_str, 0);
+                    av_log(s, AV_LOG_INFO, "Fragment index=%s", start_fragment_str);
+                }
             }
 
             if (c->encryption_scheme_str != NULL) {
@@ -2597,6 +2605,7 @@ static const AVOption options[] = {
 #endif
     { "seg_duration", "segment duration (in seconds, fractional value can be set)", OFFSET(seg_duration), AV_OPT_TYPE_DURATION, { .i64 = 5000000 }, 0, INT_MAX, E },
     { "seg_duration_ts", "segment duration timebase", OFFSET(seg_duration_ts), AV_OPT_TYPE_INT, { .i64 = 48048 }, 0, INT_MAX, E },
+    { "frame_duration_ts", "frame duration timebase", OFFSET(frame_duration_ts), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, E },
     { "remove_at_exit", "remove all segments when finished", OFFSET(remove_at_exit), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, E },
     { "seg_duration", "segment duration (in seconds, fractional value can be set)", OFFSET(seg_duration), AV_OPT_TYPE_DURATION, { .i64 = 5000000 }, 0, INT_MAX, E },
     { "single_file", "Store all segments in one file, accessed using byte ranges", OFFSET(single_file), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, E },
