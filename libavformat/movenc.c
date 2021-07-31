@@ -6471,10 +6471,13 @@ static int mov_auto_flush_fragment(AVFormatContext *s, int force)
     return ret;
 }
 
+#define DTS_THRESHOLD   1
+
 static int check_pkt(AVFormatContext *s, MOVTrack *trk, AVPacket *pkt)
 {
     int64_t ref;
     uint64_t duration;
+    int64_t dts_with_threshold;
 
     if (trk->entry) {
         ref = trk->cluster[trk->entry - 1].dts;
@@ -6490,10 +6493,12 @@ static int check_pkt(AVFormatContext *s, MOVTrack *trk, AVPacket *pkt)
         ref -= trk->dts_shift;
     }
 
-    duration = pkt->dts - ref;
-    if (pkt->dts < ref || duration >= INT_MAX) {
-        av_log(s, AV_LOG_WARNING, "Packet duration: %"PRId64" / dts: %"PRId64" is out of range\n",
-               duration, pkt->dts);
+    dts_with_threshold = pkt->dts + DTS_THRESHOLD;
+    duration = dts_with_threshold - ref;
+    if (dts_with_threshold < ref || duration >= INT_MAX) {
+        av_log(s, AV_LOG_ERROR, "Application provided duration: %"PRId64" / timestamp: %"PRId64" is out of range %"PRId64" for mov/mp4 format\n",
+            duration, pkt->dts, ref
+        );
 
         pkt->dts = ref + 1;
         pkt->pts = AV_NOPTS_VALUE;
