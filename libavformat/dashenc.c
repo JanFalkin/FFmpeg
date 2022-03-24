@@ -1943,11 +1943,7 @@ static int dash_init(AVFormatContext *s)
         av_log(s, AV_LOG_DEBUG, "HAPPY seg_duration_ts=%lld mod=%lld\n", c->seg_duration_ts,
             c->seg_duration * s->streams[i]->time_base.den % (1000000 * s->streams[i]->time_base.num));
 #endif
-<<<<<<< HEAD
-        av_log(s, AV_LOG_DEBUG, "seg_duration_ts=%ld \n", c->seg_duration_ts);
-=======
         av_log(s, AV_LOG_DEBUG, "seg_duration_ts=%"PRId64"\n", c->seg_duration_ts);
->>>>>>> e053230a6f (Cut ABR segments more accurately when the frame duration is variable (#25))
 
         set_codec_str(s, st->codecpar, &st->avg_frame_rate, os->codec_str,
                       sizeof(os->codec_str));
