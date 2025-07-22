@@ -66,8 +66,8 @@
 #include "vpcc.h"
 #include "dash.h"
 
-#define BLOCKSIZE   16
-#define KEYSIZE     16
+static const int BLOCKSIZE = 16;
+static const int KEYSIZE = 16;
 static const char AES_KEY_OUT_PATH[] = "key.bin";
 
 typedef enum {
@@ -729,12 +729,6 @@ static void dash_free(AVFormatContext *s)
             else
                 avio_close(os->ctx->pb);
         }
-        /*
-         * ff_format_io_close() releases and sets os->out to NULL,
-         * so aes_free() should be done before ff_format_io_close() to
-         * avoid a crash in avio_write(os->out, ...).
-         */
-        aes_free(os);
         ff_format_io_close(s, &os->out);
         avformat_free_context(os->ctx);
         avcodec_free_context(&os->parser_avctx);
@@ -745,6 +739,7 @@ static void dash_free(AVFormatContext *s)
         av_freep(&os->single_file_name);
         av_freep(&os->init_seg_name);
         av_freep(&os->media_seg_name);
+        aes_free(os);
     }
     av_freep(&c->streams);
 
@@ -1580,14 +1575,9 @@ static int dash_init(AVFormatContext *s)
     if (c->single_file)
         c->use_template = 0;
 
-    s->min_frame_duration = INT64_MAX;
-    s->max_frame_duration = INT64_MIN;
-    s->prev_pts = AV_NOPTS_VALUE;
-
-#if FF_API_DASH_MIN_SEG_DURATION
-    if (c->min_seg_duration != 5000000) {
-        av_log(s, AV_LOG_WARNING, "The min_seg_duration option is deprecated and will be removed. Please use the -seg_duration\n");
-        c->seg_duration = c->min_seg_duration;
+    if (!c->profile) {
+        av_log(s, AV_LOG_ERROR, "At least one profile must be enabled.\n");
+        return AVERROR(EINVAL);
     }
     if (c->lhls && s->strict_std_compliance > FF_COMPLIANCE_EXPERIMENTAL) {
         av_log(s, AV_LOG_ERROR,
@@ -1943,7 +1933,7 @@ static int dash_init(AVFormatContext *s)
         av_log(s, AV_LOG_DEBUG, "HAPPY seg_duration_ts=%lld mod=%lld\n", c->seg_duration_ts,
             c->seg_duration * s->streams[i]->time_base.den % (1000000 * s->streams[i]->time_base.num));
 #endif
-        av_log(s, AV_LOG_DEBUG, "seg_duration_ts=%"PRId64"\n", c->seg_duration_ts);
+        av_log(s, AV_LOG_DEBUG, "seg_duration_ts=%ld \n", c->seg_duration_ts);
 
         set_codec_str(s, st->codecpar, &st->avg_frame_rate, os->codec_str,
                       sizeof(os->codec_str));
@@ -2455,7 +2445,6 @@ static int dash_write_packet(AVFormatContext *s, AVPacket *pkt)
                             "and use_template, or keep a stricter keyframe interval\n");
                 }
             }
-        }
 
         if (c->write_prft && os->producer_reference_time.wallclock && !os->producer_reference_time_str[0])
             format_date(os->producer_reference_time_str,
@@ -2647,13 +2636,32 @@ static const AVOption options[] = {
         { "mp4", "make segment file in ISOBMFF format", 0, AV_OPT_TYPE_CONST, {.i64 = SEGMENT_TYPE_MP4 }, 0, UINT_MAX,   E, .unit = "segment_type"},
         { "webm", "make segment file in WebM format", 0, AV_OPT_TYPE_CONST, {.i64 = SEGMENT_TYPE_WEBM }, 0, UINT_MAX,   E, .unit = "segment_type"},
     { "extra_window_size", "number of segments kept outside of the manifest before removing from disk", OFFSET(extra_window_size), AV_OPT_TYPE_INT, { .i64 = 5 }, 0, INT_MAX, E },
-#if FF_API_DASH_MIN_SEG_DURATION
-    { "min_seg_duration", "minimum segment duration (in microseconds) (will be deprecated)", OFFSET(min_seg_duration), AV_OPT_TYPE_INT, { .i64 = 5000000 }, 0, INT_MAX, E },
-#endif
-    { "seg_duration", "segment duration (in seconds, fractional value can be set)", OFFSET(seg_duration), AV_OPT_TYPE_DURATION, { .i64 = 5000000 }, 0, INT_MAX, E },
-    { "seg_duration_ts", "segment duration timebase", OFFSET(seg_duration_ts), AV_OPT_TYPE_INT, { .i64 = 48048 }, 0, INT_MAX, E },
-    { "start_fragment_index", "starting frame sequence for fragmented mp4", OFFSET(start_fragment_index), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, E },
-    { "frame_duration_ts", "frame duration timebase", OFFSET(frame_duration_ts), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, E },
+    { "format_options","set list of options for the container format (mp4/webm) used for dash", OFFSET(format_options), AV_OPT_TYPE_DICT, {.str = NULL},  0, 0, E},
+    { "frag_duration", "fragment duration (in seconds, fractional value can be set)", OFFSET(frag_duration), AV_OPT_TYPE_DURATION, { .i64 = 0 }, 0, INT_MAX, E },
+    { "frag_type", "set type of interval for fragments", OFFSET(frag_type), AV_OPT_TYPE_INT, {.i64 = FRAG_TYPE_NONE }, 0, FRAG_TYPE_NB - 1, E, .unit = "frag_type"},
+        { "none", "one fragment per segment", 0, AV_OPT_TYPE_CONST, {.i64 = FRAG_TYPE_NONE }, 0, UINT_MAX, E, .unit = "frag_type"},
+        { "every_frame", "fragment at every frame", 0, AV_OPT_TYPE_CONST, {.i64 = FRAG_TYPE_EVERY_FRAME }, 0, UINT_MAX, E, .unit = "frag_type"},
+        { "duration", "fragment at specific time intervals", 0, AV_OPT_TYPE_CONST, {.i64 = FRAG_TYPE_DURATION }, 0, UINT_MAX, E, .unit = "frag_type"},
+        { "pframes", "fragment at keyframes and following P-Frame reordering (Video only, experimental)", 0, AV_OPT_TYPE_CONST, {.i64 = FRAG_TYPE_PFRAMES }, 0, UINT_MAX, E, .unit = "frag_type"},
+    { "global_sidx", "Write global SIDX atom. Applicable only for single file, mp4 output, non-streaming mode", OFFSET(global_sidx), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, E },
+    { "hls_master_name", "HLS master playlist name", OFFSET(hls_master_name), AV_OPT_TYPE_STRING, {.str = "master.m3u8"}, 0, 0, E },
+    { "hls_playlist", "Generate HLS playlist files(master.m3u8, media_%d.m3u8)", OFFSET(hls_playlist), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, E },
+    { "http_opts", "HTTP protocol options", OFFSET(http_opts), AV_OPT_TYPE_DICT, { .str = NULL }, 0, 0, E },
+    { "http_persistent", "Use persistent HTTP connections", OFFSET(http_persistent), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, E },
+    { "http_user_agent", "override User-Agent field in HTTP header", OFFSET(user_agent), AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, E},
+    { "ignore_io_errors", "Ignore IO errors during open and write. Useful for long-duration runs with network output", OFFSET(ignore_io_errors), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, E },
+    { "index_correction", "Enable/Disable segment index correction logic", OFFSET(index_correction), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, E },
+    { "init_seg_name", "DASH-templated name to used for the initialization segment", OFFSET(init_seg_name), AV_OPT_TYPE_STRING, {.str = "init-stream$RepresentationID$.$ext$"}, 0, 0, E },
+    { "ldash", "Enable Low-latency dash. Constrains the value of a few elements", OFFSET(ldash), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, E },
+    { "lhls", "Enable Low-latency HLS(Experimental). Adds #EXT-X-PREFETCH tag with current segment's URI", OFFSET(lhls), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, E },
+    { "master_m3u8_publish_rate", "Publish master playlist every after this many segment intervals", OFFSET(master_publish_rate), AV_OPT_TYPE_INT, {.i64 = 0}, 0, UINT_MAX, E},
+    { "max_playback_rate", "Set desired maximum playback rate", OFFSET(max_playback_rate), AV_OPT_TYPE_RATIONAL, { .dbl = 1.0 }, 0.5, 1.5, E },
+    { "media_seg_name", "DASH-templated name to used for the media segments", OFFSET(media_seg_name), AV_OPT_TYPE_STRING, {.str = "chunk-stream$RepresentationID$-$Number%05d$.$ext$"}, 0, 0, E },
+    { "method", "set the HTTP method", OFFSET(method), AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, E },
+    { "min_playback_rate", "Set desired minimum playback rate", OFFSET(min_playback_rate), AV_OPT_TYPE_RATIONAL, { .dbl = 1.0 }, 0.5, 1.5, E },
+    { "mpd_profile", "Set profiles. Elements and values used in the manifest may be constrained by them", OFFSET(profile), AV_OPT_TYPE_FLAGS, {.i64 = MPD_PROFILE_DASH }, 0, UINT_MAX, E, .unit = "mpd_profile"},
+        { "dash", "MPEG-DASH ISO Base media file format live profile", 0, AV_OPT_TYPE_CONST, {.i64 = MPD_PROFILE_DASH }, 0, UINT_MAX, E, .unit = "mpd_profile"},
+        { "dvb_dash", "DVB-DASH profile", 0, AV_OPT_TYPE_CONST, {.i64 = MPD_PROFILE_DVB }, 0, UINT_MAX, E, .unit = "mpd_profile"},
     { "remove_at_exit", "remove all segments when finished", OFFSET(remove_at_exit), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, E },
     { "seg_duration", "segment duration (in seconds, fractional value can be set)", OFFSET(seg_duration), AV_OPT_TYPE_DURATION, { .i64 = 5000000 }, 0, INT_MAX, E },
     { "single_file", "Store all segments in one file, accessed using byte ranges", OFFSET(single_file), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, E },
@@ -2661,22 +2669,12 @@ static const AVOption options[] = {
     { "streaming", "Enable/Disable streaming mode of output. Each frame will be moof fragment", OFFSET(streaming), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, E },
     { "target_latency", "Set desired target latency for Low-latency dash", OFFSET(target_latency), AV_OPT_TYPE_DURATION, { .i64 = 0 }, 0, INT_MAX, E },
     { "timeout", "set timeout for socket I/O operations", OFFSET(timeout), AV_OPT_TYPE_DURATION, { .i64 = -1 }, -1, INT_MAX, .flags = E },
-    { "index_correction", "Enable/Disable segment index correction logic", OFFSET(index_correction), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, E },
-    { "format_options","set list of options for the container format (mp4/webm) used for dash", OFFSET(format_options_str), AV_OPT_TYPE_STRING, {.str = NULL},  0, 0, E},
-    { "dash_segment_type", "set dash segment files type", OFFSET(segment_type_option), AV_OPT_TYPE_INT, {.i64 = SEGMENT_TYPE_AUTO }, 0, SEGMENT_TYPE_NB - 1, E, "segment_type"},
-    { "auto", "select segment file format based on codec", 0, AV_OPT_TYPE_CONST, {.i64 = SEGMENT_TYPE_AUTO }, 0, UINT_MAX,   E, "segment_type"},
-    { "mp4", "make segment file in ISOBMFF format", 0, AV_OPT_TYPE_CONST, {.i64 = SEGMENT_TYPE_MP4 }, 0, UINT_MAX,   E, "segment_type"},
-    { "webm", "make segment file in WebM format", 0, AV_OPT_TYPE_CONST, {.i64 = SEGMENT_TYPE_WEBM }, 0, UINT_MAX,   E, "segment_type"},
-    { "ignore_io_errors", "Ignore IO errors during open and write. Useful for long-duration runs with network output", OFFSET(ignore_io_errors), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, E },
-    { "lhls", "Enable Low-latency HLS(Experimental). Adds #EXT-X-PREFETCH tag with current segment's URI", OFFSET(lhls), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, E },
-    { "start_segment", "Specify the index of the first segment (which by default is 1)", OFFSET(start_segment), AV_OPT_TYPE_INT, { .i64 = 1 }, 0, INT_MAX, E },
-    { "encryption_scheme", "Configures the encryption scheme, allowed values are none, cenc-aes-ctr, aes-128", OFFSET(encryption_scheme_str), AV_OPT_TYPE_STRING, {.str = NULL}, .flags = AV_OPT_FLAG_ENCODING_PARAM },
-    { "encryption_key", "The media encryption key (hex)", OFFSET(encryption_key), AV_OPT_TYPE_STRING, {.str = NULL}, .flags = AV_OPT_FLAG_ENCODING_PARAM },
-    { "encryption_kid", "The media encryption key identifier (hex)", OFFSET(encryption_kid), AV_OPT_TYPE_STRING, {.str = NULL}, .flags = AV_OPT_FLAG_ENCODING_PARAM },
-    { "hls_enc", "enable AES128 encryption support", OFFSET(aes_encrypt), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, E},
-    { "hls_enc_key", "hex-coded 16 byte key to encrypt the segments", OFFSET(aes_key_hex), AV_OPT_TYPE_STRING, .flags = E},
-    { "hls_enc_key_url", "url to access the key to decrypt the segments", OFFSET(aes_key_url), AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, E},
-    { "hls_enc_iv", "hex-coded 16 byte initialization vector", OFFSET(aes_iv_hex), AV_OPT_TYPE_STRING, .flags = E},
+    { "update_period", "Set the mpd update interval", OFFSET(update_period), AV_OPT_TYPE_INT64, {.i64 = 0}, 0, INT64_MAX, E},
+    { "use_template", "Use SegmentTemplate instead of SegmentList", OFFSET(use_template), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, E },
+    { "use_timeline", "Use SegmentTimeline in SegmentTemplate", OFFSET(use_timeline), AV_OPT_TYPE_BOOL, { .i64 = 1 }, 0, 1, E },
+    { "utc_timing_url", "URL of the page that will return the UTC timestamp in ISO format", OFFSET(utc_timing_url), AV_OPT_TYPE_STRING, { 0 }, 0, 0, E },
+    { "window_size", "number of segments kept in the manifest", OFFSET(window_size), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, E },
+    { "write_prft", "Write producer reference time element", OFFSET(write_prft), AV_OPT_TYPE_BOOL, {.i64 = -1}, -1, 1, E},
     { NULL },
 };
 

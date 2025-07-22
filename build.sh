@@ -20,7 +20,7 @@ command_options=(
     --enable-libfribidi
     --enable-libfontconfig
     --enable-shared
-    --enable-avresample
+    # --enable-avresample
     --enable-pthreads
     --enable-version3
     --enable-hardcoded-tables

@@ -76,7 +76,7 @@ typedef struct SegmentContext {
     int segment_count;     ///< number of segment files already written
     int segment_start_index;
     int segment_start_index_initialized;
-    ff_const59 AVOutputFormat *oformat;
+    const AVOutputFormat *oformat;
     AVFormatContext *avf;
     char *format;              ///< format to use for output segment files
     AVDictionary *format_options;
